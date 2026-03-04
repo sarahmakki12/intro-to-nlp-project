@@ -32,12 +32,14 @@ for mission_path in "${MISSIONS[@]}"; do
     count=$(echo "$links" | wc -l)
     echo "  Found ${count} transcript pages"
 
+    i=0
     for page in $links; do
+        i=$((i + 1))
         if [[ -f "${out_dir}/${page}" ]]; then
-            echo "  Skipping (exists): ${page}"
+            echo "  Skipping (${i}/${count}): ${page}"
             continue
         fi
-        echo "  Downloading: ${page}"
+        echo "  Downloading (${i}/${count}): ${page}"
         curl -s -o "${out_dir}/${page}" "${BASE}/${mission_path}/${page}"
         sleep 1
     done

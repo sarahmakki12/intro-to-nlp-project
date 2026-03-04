@@ -1,45 +1,50 @@
 #!/usr/bin/env python3
 """
-Extract and clean astronaut dialogue from Apollo Flight Journal HTML transcripts.
+Extract and clean astronaut dialogue from Apollo Lunar Surface Journal HTML.
 
-For each HTML file in data/raw/Apollo Flight Journal/, produces a cleaned .txt
-file in data/cleaned/Apollo Flight Journal/ containing only astronaut lines with
-timestamps, speaker labels, and annotations removed.
+For each HTML file in data/raw/Apollo Lunar Surface Journal/, produces a cleaned
+.txt file in data/cleaned/Apollo Lunar Surface Journal/ containing only crew
+dialogue with timestamps, speaker labels, and annotations removed.
+
+ALSJ format: <b>HHH:MM:SS</b> Speaker: dialogue text<p>
+Timestamps may also use "xx" for unknown seconds: <b>HHH:MM:xx</b>
+Anchors may wrap the timestamp or precede the <b> tag.
+Commentary lives in <blockquote> blocks and is excluded.
 """
 
 import html
-import os
 import re
 from pathlib import Path
 
+# CDR, CMP, LMP for each mission
 CREW = {
-    7: ["Schirra", "Eisele", "Cunningham"],
-    8: ["Borman", "Lovell", "Anders"],
-    9: ["McDivitt", "Scott", "Schweickart"],
-    10: ["Stafford", "Young", "Cernan"],
     11: ["Armstrong", "Collins", "Aldrin"],
     12: ["Conrad", "Gordon", "Bean"],
-    13: ["Lovell", "Swigert", "Haise"],
     14: ["Shepard", "Roosa", "Mitchell"],
     15: ["Scott", "Worden", "Irwin"],
     16: ["Young", "Mattingly", "Duke"],
     17: ["Cernan", "Evans", "Schmitt"],
 }
 
-ROLE_LABELS = {"cdr", "cmp", "lmp", "sc", "spacecraft"}
-
-CC_DIV_RE = re.compile(
-    r"<div(?:\s+class=\"(?:cc|onboard)\")?[^>]*>"
-    r"((?:<a\s+name=|<b>).*?)"
-    r"</div>",
-    re.DOTALL,
+# Matches <b>[optional anchor]TIMESTAMP[/anchor]</b>
+# Timestamps: 102:15:02 or 185:58:xx
+TIMESTAMP_RE = (
+    r"<b>\s*(?:<a\s[^>]*>\s*)?"
+    r"\d{3}:\d{2}:(?:\d{2}|xx)"
+    r"\s*(?:</a>)?\s*</b>"
 )
 
-TIMESTAMP_SPEAKER_RE = re.compile(
-    r"^(?:\d{3}:\d{2}:\d{2}\s+)?"  # optional GET timestamp
-    r"([A-Za-z][A-Za-z0-9 /'-]*?)"  # speaker name
-    r"(?:\s*\([^)]*\))?"  # optional qualifier like (onboard)
-    r"\s*:\s*"  # colon separator
+# Full dialogue entry: timestamp block, speaker, colon, dialogue text.
+# Dialogue text runs until <p>, <blockquote, next timestamp, or EOF.
+DIALOGUE_RE = re.compile(
+    TIMESTAMP_RE
+    + r"\s+"
+    + r"([A-Za-z][A-Za-z /'-]*?)"       # group 1: speaker name
+    + r"(?:\s*\([^)]*\))?"              # optional qualifier like (onboard)
+    + r"\s*:\s*"                         # colon separator
+    + r"(.*?)"                           # group 2: dialogue text
+    + r"(?:<p>|<p\s*/>|(?=\s*<blockquote)|(?=\s*" + TIMESTAMP_RE + r")|$)",
+    re.DOTALL,
 )
 
 GARBLE_RE = re.compile(r"garble", re.IGNORECASE)
@@ -80,7 +85,7 @@ def strip_html(text: str) -> str:
     return text.strip()
 
 
-def clean_cc_line(raw_html: str, crew_lower: set[str]) -> str | None:
+def clean_dialogue(raw_html: str) -> str | None:
     text = strip_html(raw_html)
     if not text:
         return None
@@ -88,32 +93,20 @@ def clean_cc_line(raw_html: str, crew_lower: set[str]) -> str | None:
     if GARBLE_RE.search(text):
         return None
 
-    m = TIMESTAMP_SPEAKER_RE.match(text)
-    if not m:
+    if has_fill_in_paren(text):
         return None
 
-    speaker = m.group(1).strip().lower()
-    if speaker not in crew_lower and speaker not in ROLE_LABELS:
+    text = PAREN_RE.sub("", text)
+    text = BRACKET_RE.sub("", text)
+    text = re.sub(r"\s*\([^)]*$", "", text)
+    text = re.sub(r"\s*\[[^\]]*$", "", text)
+    text = re.sub(r"[(){}\[\]]", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
+
+    if not text or len(text) < 2:
         return None
 
-    dialogue = text[m.end():].strip()
-    if not dialogue:
-        return None
-
-    if has_fill_in_paren(dialogue):
-        return None
-
-    dialogue = PAREN_RE.sub("", dialogue)
-    dialogue = BRACKET_RE.sub("", dialogue)
-    dialogue = re.sub(r"\s*\([^)]*$", "", dialogue)
-    dialogue = re.sub(r"\s*\[[^\]]*$", "", dialogue)
-    dialogue = re.sub(r"[(){}\[\]]", "", dialogue)
-    dialogue = re.sub(r"\s+", " ", dialogue).strip()
-
-    if not dialogue or len(dialogue) < 2:
-        return None
-
-    return dialogue
+    return text
 
 
 def process_file(input_path: Path, output_path: Path, mission: int) -> int:
@@ -123,10 +116,14 @@ def process_file(input_path: Path, output_path: Path, mission: int) -> int:
         content = f.read()
 
     lines = []
-    for raw in CC_DIV_RE.findall(content):
-        cleaned = clean_cc_line(raw, crew_lower)
-        if cleaned:
-            lines.append(cleaned)
+    for m in DIALOGUE_RE.finditer(content):
+        speaker = m.group(1).strip().lower()
+        if speaker not in crew_lower and speaker != "lm crew":
+            continue
+
+        dialogue = clean_dialogue(m.group(2))
+        if dialogue:
+            lines.append(dialogue)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
@@ -137,8 +134,8 @@ def process_file(input_path: Path, output_path: Path, mission: int) -> int:
 
 
 def main():
-    raw_dir = Path("data/raw/Apollo Flight Journal")
-    clean_dir = Path("data/cleaned/Apollo Flight Journal")
+    raw_dir = Path("data/raw/Apollo Lunar Surface Journal")
+    clean_dir = Path("data/cleaned/Apollo Lunar Surface Journal")
 
     if not raw_dir.exists():
         print(f"Error: {raw_dir} not found")

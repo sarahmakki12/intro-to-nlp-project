@@ -11,6 +11,7 @@ Features:
 """
 
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
@@ -171,6 +172,8 @@ def translate_language(lines: list[str], lang_code: str, args):
 
             for tline in translated:
                 out.write(tline + "\n")
+            out.flush()
+            os.fsync(out.fileno())
 
             lines_done += len(batch)
             save_progress(args.output_dir, lang_code, lines_done)

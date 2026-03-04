@@ -170,5 +170,12 @@ Output: `data/training/en.txt` (~178,283 lines of clean English astronaut dialog
 ## Next Steps
 
 - Translate `data/training/en.txt` into the other 9 required languages (ru, zh, ja, hi, ar, ko, fr, de, it)
+- Explore transcripts from non-American space agencies for additional variety, especially for non-English languages:
+  - **ESA** (European Space Agency): mission transcripts and astronaut communications, potentially useful for French, German, and Italian
+  - **Roscosmos / Soviet missions**: Vostok, Voskhod, Soyuz, and Mir transcripts for Russian-language data
+  - **JAXA** (Japan Aerospace Exploration Agency): Japanese astronaut communications from ISS expeditions
+  - **ISRO** (Indian Space Research Organisation): Gaganyaan and other mission communications for Hindi
+  - **KARI** (Korea Aerospace Research Institute): Korean astronaut communications for Korean-language data
+  - These could provide native-language technical dialogue rather than relying solely on machine translation of English transcripts
 - Build baseline n-gram model
 - Evaluate on `data/open-dev/input.txt`

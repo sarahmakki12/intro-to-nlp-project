@@ -52,13 +52,18 @@ src/data/
 │   ├── apollo_flight_journal.py
 │   ├── apollo_lunar_surface_journal.py
 │   └── spacelog.py
-└── combine_cleaned.py
+├── combine_cleaned.py
+├── dedup.py
+└── translate.py
 
 data/
 ├── raw/              # Downloaded HTML/text files (not committed)
 ├── cleaned/          # Per-corpus cleaned text files
 └── training/
-    └── en.txt        # Combined English training data
+    ├── en.txt        # Combined English training data (178K lines)
+    ├── en_capped.txt # English with duplicates capped at 10 (150K lines)
+    ├── en_unique.txt # Unique English lines (138K lines, translation source)
+    └── {lang}.txt    # Translated training data (ru, zh, ja, hi, ar, ko, fr, de, it)
 ```
 
 Each corpus has its own scraping and cleaning script because the source formats differ significantly. The combine script is general-purpose and merges everything.
@@ -167,9 +172,125 @@ python src/data/combine_cleaned.py
 
 Output: `data/training/en.txt` (~178,283 lines of clean English astronaut dialogue)
 
+### Step 4: Deduplication / Capping
+
+```bash
+python src/data/dedup.py
+```
+
+The raw combined corpus contains significant repetition — common acknowledgments like "Okay." (8,342 occurrences), "Roger." (2,240), "Yes." (2,731) dominate. While these are legitimate dialogue patterns the model should learn, having thousands of copies wastes translation budget and skews training.
+
+We cap each unique line at 10 occurrences maximum, preserving original order. This produces:
+
+- **`en_capped.txt`** (~150,018 lines): for English training — retains frequency signal for common phrases without extreme repetition
+- **`en_unique.txt`** (~138,043 lines): strictly unique lines in first-occurrence order, used as the source for translation
+
+| Metric | Count |
+|--------|-------|
+| Original lines | 178,283 |
+| After capping (≤10) | 150,018 |
+| Unique lines | 138,043 |
+| Duplicates removed | 28,265 (15.9%) |
+
+### Step 5: Translation
+
+```bash
+python src/data/translate.py
+```
+
+Translates `en_unique.txt` into the 9 target languages (ru, zh, ja, hi, ar, ko, fr, de, it) using Google Translate via the `deep-translator` Python library. Key features:
+
+- **Batching**: Lines are joined with `\n` into batches of ~4,500 characters per API request, reducing the number of calls ~70x compared to line-by-line translation. If Google merges/splits lines in a batch, the script falls back to line-by-line for that batch.
+- **Rate limiting**: Configurable delay between requests (default 0.5s) with exponential backoff on errors (HTTP 429, 500, etc.).
+- **Checkpoint/resume**: Progress is saved per language after each batch. If interrupted, re-running the script picks up where it left off.
+
+Output: `data/training/{lang}.txt` for each target language, with one translated line per source line in the same order as `en_unique.txt`.
+
+#### Running translation in the background
+
+The full translation takes ~5 hours (138K lines x 9 languages). Run it via `nohup` so it persists across terminal/session closures:
+
+```bash
+cd /home/sarahmakki12/cs489/intro-to-nlp-project
+nohup .venv/bin/python3 src/data/translate.py > data/training/translate.log 2>&1 &
+```
+
+To monitor progress:
+
+```bash
+# Check which line the current language is on
+cat data/training/.progress_ru   # (or .progress_zh, .progress_ja, etc.)
+
+# See which languages have progress files (started or completed)
+ls data/training/.progress_*
+
+# Check if the process is still alive (use PID from launch output, or find it)
+ps -p <PID>
+ps aux | grep translate.py | grep -v grep
+```
+
+If interrupted, re-run the same `nohup` command -- checkpoint/resume skips already-translated lines.
+
+To reset a language and re-translate from scratch, delete its output and progress files:
+
+```bash
+rm data/training/ru.txt data/training/.progress_ru
+```
+
+## Running the Full Pipeline
+
+```bash
+# 1. Download raw data
+bash src/data/scraping/apollo_flight_journal.sh
+bash src/data/scraping/apollo_lunar_surface_journal.sh
+bash src/data/scraping/spacelog.sh
+
+# 2. Clean each corpus
+python src/data/cleaning/apollo_flight_journal.py
+python src/data/cleaning/apollo_lunar_surface_journal.py
+python src/data/cleaning/spacelog.py
+
+# 3. Combine into training file
+python src/data/combine_cleaned.py
+
+# 4. Deduplicate / cap
+python src/data/dedup.py
+
+# 5. Translate (long-running, supports resume)
+python src/data/translate.py
+```
+
 ## Next Steps
 
-- Translate `data/training/en.txt` into the other 9 required languages (ru, zh, ja, hi, ar, ko, fr, de, it)
+### In progress
+
+- **Translation running in background** — translating `en_unique.txt` into 9 languages via Google Translate. Monitor with `cat data/training/.progress_*` and `ps aux | grep translate.py`.
+
+### After translation completes
+
+- Verify line counts match for each language: every `data/training/{lang}.txt` should have 138,043 lines (same as `en_unique.txt`)
+- Check for untranslated lines (compare each translated line to its English source, report stats per language)
+- Reassemble capped multilingual training files by replaying the cap-at-10 logic from `en.txt` onto each translated language file (map each English line to its translation, preserve the same repetition pattern)
+
+### Restructure training data format
+
+The current pipeline outputs flat `.txt` files with no provenance tracking. This should be refactored into a structured CSV format:
+
+1. **Redo `combine_cleaned.py`** to produce a CSV with columns: `text`, `corpus` (AFJ / ALSJ / Spacelog), `mission`, `file`, `line_number`. This preserves the source of every line.
+
+2. **Redo `dedup.py`** to read this CSV and produce a deduplicated CSV with columns: `unique_id`, `text`, `corpus`, `mission`, `file`, `line_number`, `occurrence_count`. The `unique_id` is assigned per unique text, `corpus`/`mission`/`file`/`line_number` are from the first occurrence, and `occurrence_count` tracks how many times the line appeared (capped or uncapped).
+
+3. **After translation**, each `{lang}.txt` has lines in the same order as `en_unique.txt`. Build a final combined multilingual CSV with columns: `id` (row number), `unique_id` (links translations of the same sentence), `lang`, `text`, `corpus`, `mission`, `file`, `line_number`, `occurrence_count`. This means every English sentence and its 9 translations share the same `unique_id`, making it easy to cross-reference or filter by language.
+
+### Model development
+
+- Build baseline n-gram model using kaggle training data (`data/kaggle/train.csv`) for immediate iteration
+- Evaluate on `data/open-dev/input.txt`
+- Incorporate translated corpus once available to improve non-English performance
+- Explore more advanced models (transformer, fine-tuned/distilled pretrained model) if n-gram baseline meets midterm threshold
+
+### Optional: additional native-language data
+
 - Explore transcripts from non-American space agencies for additional variety, especially for non-English languages:
   - **ESA** (European Space Agency): mission transcripts and astronaut communications, potentially useful for French, German, and Italian
   - **Roscosmos / Soviet missions**: Vostok, Voskhod, Soyuz, and Mir transcripts for Russian-language data
@@ -177,5 +298,3 @@ Output: `data/training/en.txt` (~178,283 lines of clean English astronaut dialog
   - **ISRO** (Indian Space Research Organisation): Gaganyaan and other mission communications for Hindi
   - **KARI** (Korea Aerospace Research Institute): Korean astronaut communications for Korean-language data
   - These could provide native-language technical dialogue rather than relying solely on machine translation of English transcripts
-- Build baseline n-gram model
-- Evaluate on `data/open-dev/input.txt`

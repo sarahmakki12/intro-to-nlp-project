@@ -4,6 +4,7 @@ work
 
 data/raw
 data/cleaned
-data/training
+data/training/.progress_*
+data/training/translate*.log
 
 .venv

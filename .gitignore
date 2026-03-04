@@ -1,3 +1,6 @@
 output
 work
 *.py[cod]
+
+data/raw
+data/cleaned

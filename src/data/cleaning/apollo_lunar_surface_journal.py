@@ -66,13 +66,15 @@ FILL_IN_WORDS = {
 }
 
 
-def has_fill_in_paren(text: str) -> bool:
-    for m in re.finditer(r"\(([^)]*)\)", text):
-        content = m.group(1).strip().lower()
-        words = content.split()
+def unwrap_fill_in_parens(text: str) -> str:
+    """Replace (word) with word when content is 1-3 common fill-in words."""
+    def _replace(m: re.Match) -> str:
+        content = m.group(1).strip()
+        words = content.lower().split()
         if 1 <= len(words) <= 3 and all(w in FILL_IN_WORDS for w in words):
-            return True
-    return False
+            return content
+        return m.group(0)
+    return re.sub(r"\(([^)]*)\)", _replace, text)
 
 
 def strip_html(text: str) -> str:
@@ -93,9 +95,7 @@ def clean_dialogue(raw_html: str) -> str | None:
     if GARBLE_RE.search(text):
         return None
 
-    if has_fill_in_paren(text):
-        return None
-
+    text = unwrap_fill_in_parens(text)
     text = PAREN_RE.sub("", text)
     text = BRACKET_RE.sub("", text)
     text = re.sub(r"\s*\([^)]*$", "", text)

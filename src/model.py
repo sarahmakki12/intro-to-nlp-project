@@ -143,13 +143,15 @@ class CharNgramModel:
 
     def save(self, work_dir: str, name: str = "model"):
         path = Path(work_dir) / f"{name}.pkl"
+        tmp_path = path.with_suffix(".tmp.pkl")
         data = {
             "max_order": self.max_order,
             "ngram_counts": self.ngram_counts,
             "global_counts": self.global_counts,
         }
-        with open(path, "wb") as f:
+        with open(tmp_path, "wb") as f:
             pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
+        tmp_path.rename(path)
         size_mb = path.stat().st_size / (1024 * 1024)
         print(f"Model saved to {path} ({size_mb:.1f} MB)")
 

@@ -1,97 +1,127 @@
 #!/usr/bin/env python
+import csv
 import os
-import string
-import random
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
+from pathlib import Path
+
+from model import CharNgramModel, CORPUS_DIR, CORPUS_FILES
 
 
-class MyModel:
-    """
-    This is a starter model to get you started. Feel free to modify this file.
-    """
-
-    @classmethod
-    def load_training_data(cls):
-        # your code here
-        # this particular model doesn't train
-        return []
-
-    @classmethod
-    def load_test_data(cls, fname):
-        # your code here
-        data = []
-        with open(fname) as f:
-            for line in f:
-                inp = line[:-1]  # the last character is a newline
-                data.append(inp)
-        return data
-
-    @classmethod
-    def write_pred(cls, preds, fname):
-        with open(fname, 'wt') as f:
-            for p in preds:
-                f.write('{}\n'.format(p))
-
-    def run_train(self, data, work_dir):
-        # your code here
-        pass
-
-    def run_pred(self, data):
-        # your code here
-        preds = []
-        all_chars = string.ascii_letters
-        for inp in data:
-            # this model just predicts a random character each time
-            top_guesses = [random.choice(all_chars) for _ in range(3)]
-            preds.append(''.join(top_guesses))
-        return preds
-
-    def save(self, work_dir):
-        # your code here
-        # this particular model has nothing to save, but for demonstration purposes we will save a blank file
-        with open(os.path.join(work_dir, 'model.checkpoint'), 'wt') as f:
-            f.write('dummy save')
-
-    @classmethod
-    def load(cls, work_dir):
-        # your code here
-        # this particular model has nothing to load, but for demonstration purposes we will load a blank file
-        with open(os.path.join(work_dir, 'model.checkpoint')) as f:
-            dummy_save = f.read()
-        return MyModel()
+def is_csv(path: str) -> bool:
+    return path.endswith(".csv")
 
 
-if __name__ == '__main__':
+def load_train_csv(fname: str) -> tuple[list[str], list[str]]:
+    contexts, targets = [], []
+    with open(fname, encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            contexts.append(row["context"])
+            targets.append(row["prediction"])
+    return contexts, targets
+
+
+def load_test_data(fname: str) -> tuple[list[str], list[str]]:
+    """Returns (ids, contexts). For CSV files ids come from the file; for
+    plain text files ids are sequential line numbers."""
+    ids, contexts = [], []
+    if is_csv(fname):
+        with open(fname, encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                ids.append(row["id"])
+                contexts.append(row["context"])
+    else:
+        with open(fname, encoding="utf-8") as f:
+            for i, line in enumerate(f):
+                ids.append(str(i))
+                contexts.append(line.rstrip("\n"))
+    return ids, contexts
+
+
+def write_predictions(ids: list[str], preds: list[str], fname: str):
+    if is_csv(fname):
+        with open(fname, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["id", "prediction"])
+            for row_id, pred in zip(ids, preds):
+                writer.writerow([row_id, pred])
+    else:
+        with open(fname, "w", encoding="utf-8") as f:
+            for pred in preds:
+                f.write(f"{pred}\n")
+
+
+if __name__ == "__main__":
     parser = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
-    parser.add_argument('mode', choices=('train', 'test'), help='what to run')
-    parser.add_argument('--work_dir', help='where to save', default='work')
-    parser.add_argument('--test_data', help='path to test data', default='example/input.txt')
-    parser.add_argument('--test_output', help='path to write test predictions', default='pred.txt')
+    parser.add_argument("mode", choices=("train", "test"), help="what to run")
+    parser.add_argument("--work_dir", help="where to save/load model", default="work")
+    parser.add_argument("--train_data", help="path to training CSV (uses context/prediction pairs)")
+    parser.add_argument("--train_files", nargs="+",
+                        help="specific .txt files for raw text training (overrides default corpus)")
+    parser.add_argument("--test_data", help="path to test data (CSV or txt)")
+    parser.add_argument("--test_output", help="path to write predictions", default="pred.txt")
+    parser.add_argument("--max_order", type=int, default=6, help="max n-gram order")
+    parser.add_argument("--limit", type=int, default=None,
+                        help="only use the first N lines from each text file")
+    parser.add_argument("--model_name", type=str, default=None,
+                        help="model filename (without .pkl). Auto-generated during "
+                             "training if not set, e.g. 'ngram_o4_50k'")
     args = parser.parse_args()
 
-    random.seed(0)
+    if args.mode == "train":
+        os.makedirs(args.work_dir, exist_ok=True)
 
-    if args.mode == 'train':
-        if not os.path.isdir(args.work_dir):
-            print('Making working directory {}'.format(args.work_dir))
-            os.makedirs(args.work_dir)
-        print('Instatiating model')
-        model = MyModel()
-        print('Loading training data')
-        train_data = MyModel.load_training_data()
-        print('Training')
-        model.run_train(train_data, args.work_dir)
-        print('Saving model')
-        model.save(args.work_dir)
-    elif args.mode == 'test':
-        print('Loading model')
-        model = MyModel.load(args.work_dir)
-        print('Loading test data from {}'.format(args.test_data))
-        test_data = MyModel.load_test_data(args.test_data)
-        print('Making predictions')
-        pred = model.run_pred(test_data)
-        print('Writing predictions to {}'.format(args.test_output))
-        assert len(pred) == len(test_data), 'Expected {} predictions but got {}'.format(len(test_data), len(pred))
-        model.write_pred(pred, args.test_output)
-    else:
-        raise NotImplementedError('Unknown mode {}'.format(args.mode))
+        if args.train_data:
+            if args.model_name is None:
+                args.model_name = f"csv_o{args.max_order}"
+        else:
+            if args.model_name is None:
+                limit_tag = f"_{args.limit // 1000}k" if args.limit else "_full"
+                args.model_name = f"ngram_o{args.max_order}{limit_tag}"
+        print(f"Model name: {args.model_name}")
+
+        model = CharNgramModel(max_order=args.max_order)
+
+        if args.train_data:
+            print(f"Loading training data from {args.train_data}")
+            contexts, targets = load_train_csv(args.train_data)
+            print(f"Training model (max_order={args.max_order})")
+            model.train(contexts, targets)
+        else:
+            if args.train_files:
+                txt_files = [Path(f) for f in args.train_files]
+            else:
+                txt_files = [CORPUS_DIR / f for f in CORPUS_FILES]
+            missing = [f for f in txt_files if not f.exists()]
+            if missing:
+                parser.error(f"Missing files: {[str(f) for f in missing]}")
+            limit_str = f", limit={args.limit} lines/file" if args.limit else ""
+            print(f"Training on {len(txt_files)} text files "
+                  f"(max_order={args.max_order}{limit_str})")
+            model.train_from_text(txt_files, work_dir=args.work_dir,
+                                  model_name=args.model_name, limit=args.limit)
+
+        model.save(args.work_dir, name=args.model_name)
+
+    elif args.mode == "test":
+        if not args.test_data:
+            parser.error("--test_data is required for test mode")
+        if args.model_name is None:
+            parser.error("--model_name is required for test mode")
+
+        if args.test_output == "pred.txt" and is_csv(args.test_data):
+            args.test_output = "pred.csv"
+
+        print(f"Loading model {args.model_name} from {args.work_dir}")
+        model = CharNgramModel.load(args.work_dir, name=args.model_name)
+
+        print(f"Loading test data from {args.test_data}")
+        ids, contexts = load_test_data(args.test_data)
+
+        print(f"Predicting {len(contexts):,} examples")
+        preds = [model.predict(ctx) for ctx in contexts]
+
+        print(f"Writing predictions to {args.test_output}")
+        write_predictions(ids, preds, args.test_output)
+        print("Done")

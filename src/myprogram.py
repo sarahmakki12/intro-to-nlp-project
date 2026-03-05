@@ -88,6 +88,7 @@ if __name__ == "__main__":
             contexts, targets = load_train_csv(args.train_data)
             print(f"Training model (max_order={args.max_order})")
             model.train(contexts, targets)
+            model.save(args.work_dir, name=args.model_name)
         else:
             if args.train_files:
                 txt_files = [Path(f) for f in args.train_files]
@@ -101,9 +102,6 @@ if __name__ == "__main__":
                   f"(max_order={args.max_order}{limit_str})")
             model.train_from_text(txt_files, work_dir=args.work_dir,
                                   model_name=args.model_name, limit=args.limit)
-            # train_from_text already checkpoints after every file; skip redundant save
-        else:
-            model.save(args.work_dir, name=args.model_name)
 
     elif args.mode == "test":
         if not args.test_data:

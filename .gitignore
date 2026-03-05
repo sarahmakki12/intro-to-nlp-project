@@ -1,6 +1,8 @@
 output
 work
 *.py[cod]
+submit
+*.zip
 
 data/raw
 data/cleaned

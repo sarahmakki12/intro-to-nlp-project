@@ -64,7 +64,7 @@ if __name__ == "__main__":
     parser.add_argument("--max_order", type=int, default=6, help="max n-gram order")
     parser.add_argument("--limit", type=int, default=None,
                         help="only use the first N lines from each text file")
-    parser.add_argument("--model_name", type=str, default=None,
+    parser.add_argument("--model_name", type=str, default="ngram_o6_full",
                         help="model filename (without .pkl). Auto-generated during "
                              "training if not set, e.g. 'ngram_o4_50k'")
     args = parser.parse_args()

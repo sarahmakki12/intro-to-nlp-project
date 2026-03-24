@@ -66,8 +66,8 @@ Submit your deliverables on LEARN. Your proposal/reports must have the names `pr
 * **System Performance** (The team reserves the right to raise the performance thresholds specified below. If that happens you will get a heads up):
 
   * 0: No/invalid submission or *does not achieve satisfactory* performance compared to the baseline implementation i.e. < 60%.
-  * 1: Achieves *satisfactory* performance compared to the baseline implementation i.e. >= 60% and <= 70%.
-  * 2: Achieves and *significantly* outperforms baseline implementation i.e. > 70%.
+  * 1: Achieves *satisfactory* performance compared to the baseline implementation i.e. >= 60% and < 75%.
+  * 2: Achieves and *significantly* outperforms baseline implementation i.e. >= 75%.
   * 3 (Bonus): Program achieves top-3 performance.
 
 ## Kaggle Competition (Scoring) + LEARN Submission (Code)

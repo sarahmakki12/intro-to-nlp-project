@@ -2,9 +2,11 @@
 
 - Models will be tested on CPU and will have limitations on test runtime and model checkpoint to model the limitations in the model scenario (i.e. astronauts using this model in space). See the README for more details.
 
+- Your dropbox submission will be executed on 8 cores of the Intel Xeon Gold 6338 Processor with 8 GB of RAM and is expected to run in 30 minutes (and build in 15 minutes).
+
 - Your uncompressed dropbox submission is limited to 1 GB, not just the checkpoint. You don't need to include the `data` directory in your submission for this reason. See the README for details on what to include.
 
-- The inference size is no more than 10k (for dropbox submission).
+- (Unsure about this one) The inference size is no more than 10k (for dropbox submission).
 
 # Data
 

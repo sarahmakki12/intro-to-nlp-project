@@ -206,6 +206,8 @@ Translates `en_unique.txt` into the 9 target languages (ru, zh, ja, hi, ar, ko, 
 
 Output: `data/training/{lang}.txt` for each target language, with one translated line per source line in the same order as `en_unique.txt`.
 
+**Note on numbers:** Google Translate preserves numbers as standard ASCII digits (0-9) across all target languages — it does not convert them to native numeral systems (e.g., Hindi Devanagari digits, Arabic-Indic digits). This matches the evaluation data, where numbers appear as ASCII digits regardless of language.
+
 #### Running translation in the background
 
 The full translation takes ~5 hours (138K lines x 9 languages). Run it via `nohup` so it persists across terminal/session closures:
@@ -260,16 +262,117 @@ python src/data/dedup.py
 python src/data/translate.py
 ```
 
+### Translation Results
+
+Translation completed for all 9 target languages. Line count verification:
+
+| File | Lines |
+|------|-------|
+| en_unique.txt | 138,043 |
+| ru.txt | 138,043 |
+| zh.txt | 138,043 |
+| ja.txt | 138,043 |
+| hi.txt | 138,043 |
+| ar.txt | 138,043 |
+| ko.txt | 138,043 |
+| fr.txt | 138,043 |
+| de.txt | 138,043 |
+| it.txt | 138,043 |
+| **Total** | **1,380,430** |
+
+All files are line-aligned with `en_unique.txt`, so line N in any translated file corresponds to line N in the English source. Some lines may remain untranslated (Google Translate returns the original English when it cannot translate); this is acceptable since the evaluation data also contains English text mixed into non-English contexts.
+
+## Model Development
+
+### Architecture: Character-Level N-Gram with Backoff
+
+The model (`src/model.py`) is a character-level n-gram language model. For each character position in the training data, it records the preceding prefix of length 1 through `max_order` and the character that followed. At prediction time, it backs off from the longest matching prefix to shorter ones until it finds a prefix with at least 3 observations, then returns the top 3 most frequent next characters.
+
+Key design decisions:
+
+- **Case-insensitive**: All text is lowercased during both training and prediction. The grader (`grader/grade.py`) also lowercases before comparison, so case never matters for scoring.
+- **Line-independent training**: Each line in the training text files is treated as a separate sentence. The n-gram window resets at line boundaries to avoid learning spurious patterns across unrelated sentences.
+- **Backoff with minimum count**: If the highest-order matching prefix has fewer than 3 total observations, the model backs off to a shorter prefix. This avoids noisy predictions from very sparse high-order matches.
+- **Global fallback**: If no prefix matches at any order, predictions fall back to the globally most common characters.
+- **Atomic checkpoints**: Model saves write to a temporary file first, then atomically rename to the target path. This prevents checkpoint corruption if the process is killed mid-write.
+
+### Training Modes
+
+The model supports two training modes:
+
+1. **Raw text files** (default): Slides an n-gram window across each line, extracting (prefix, next_char) pairs for all orders. This is used for training on our translated corpus.
+2. **CSV pairs**: Reads explicit (context, prediction) pairs from a CSV file. This is used for training on the Kaggle-provided `train.csv`.
+
+### CLI Usage (`src/myprogram.py`)
+
+**Training on the corpus (default):**
+
+```bash
+# Train on all 10 language files (en + 9 translations), max_order=4, first 50K lines per file
+python src/myprogram.py train --max_order 4 --limit 50000
+
+# Train on all lines (no limit) — requires more memory
+python src/myprogram.py train --max_order 6
+
+# Train on specific text files instead of the default corpus
+python src/myprogram.py train --train_files data/open-dev/input.txt data/training/en_unique.txt --max_order 4
+
+# Train on a CSV with context/prediction pairs
+python src/myprogram.py train --train_data data/kaggle/train.csv --max_order 6
+```
+
+**Key training options:**
+
+| Flag | Description |
+|------|-------------|
+| `--max_order N` | Maximum n-gram prefix length (default: 6). Higher orders capture more specific patterns but use more memory. |
+| `--limit N` | Only use the first N lines from each text file. Useful for faster iteration or fitting in memory. |
+| `--model_name NAME` | Custom model filename (without `.pkl`). Auto-generated if not set: `ngram_o{order}_{limit}k` for text training, `csv_o{order}` for CSV training. |
+| `--train_files FILE [FILE ...]` | Override the default corpus file list with specific text files. |
+| `--train_data CSV` | Train from a CSV with `context` and `prediction` columns instead of raw text. |
+
+Model checkpoints are saved to `work/{model_name}.pkl` after every file and every 50,000 lines during text training.
+
+**Prediction:**
+
+```bash
+# Predict on open-dev (plain text input, plain text output)
+python src/myprogram.py test --model_name ngram_o4_50k --test_data data/open-dev/input.txt --test_output pred.txt
+
+# Predict on Kaggle test set (CSV input, auto-generates CSV output)
+python src/myprogram.py test --model_name ngram_o4_50k --test_data data/kaggle/test.csv
+```
+
+When `--test_data` is a CSV, the output format automatically switches to CSV with `id,prediction` columns matching the Kaggle submission format.
+
+**Evaluation:**
+
+```bash
+python grader/grade.py pred.txt data/open-dev/answer.txt
+```
+
+### Current Results
+
+Model `ngram_o4_50k` (order 4, 50K lines per file, 500K lines total, 87.8 MB checkpoint):
+
+| Language | Accuracy |
+|----------|----------|
+| hi (Hindi) | 78.2% |
+| ru (Russian) | 76.3% |
+| de (German) | 75.8% |
+| fr (French) | 75.1% |
+| it (Italian) | 74.0% |
+| en (English) | 73.8% |
+| ar (Arabic) | 72.1% |
+| ko (Korean) | 65.5% |
+| ja (Japanese) | 60.8% |
+| zh (Chinese) | 45.1% |
+| **Overall (weighted)** | **~69.5%** |
+
+8 of 10 languages exceed 70%. Chinese and Japanese are the weakest due to their large character vocabularies — with thousands of possible next characters, top-3 accuracy is inherently harder than for alphabetic languages with ~30 characters.
+
 ## Next Steps
 
-### In progress
-
-- **Translation running in background** — translating `en_unique.txt` into 9 languages via Google Translate. Monitor with `cat data/training/.progress_*` and `ps aux | grep translate.py`.
-
-### After translation completes
-
-- Verify line counts match for each language: every `data/training/{lang}.txt` should have 138,043 lines (same as `en_unique.txt`)
-- Check for untranslated lines (compare each translated line to its English source, report stats per language)
 - Reassemble capped multilingual training files by replaying the cap-at-10 logic from `en.txt` onto each translated language file (map each English line to its translation, preserve the same repetition pattern)
 
 ### Restructure training data format
@@ -282,11 +385,11 @@ The current pipeline outputs flat `.txt` files with no provenance tracking. This
 
 3. **After translation**, each `{lang}.txt` has lines in the same order as `en_unique.txt`. Build a final combined multilingual CSV with columns: `id` (row number), `unique_id` (links translations of the same sentence), `lang`, `text`, `corpus`, `mission`, `file`, `line_number`, `occurrence_count`. This means every English sentence and its 9 translations share the same `unique_id`, making it easy to cross-reference or filter by language.
 
-### Model development
+### Model improvements
 
-- Build baseline n-gram model using kaggle training data (`data/kaggle/train.csv`) for immediate iteration
-- Evaluate on `data/open-dev/input.txt`
-- Incorporate translated corpus once available to improve non-English performance
+- Train with more data (higher `--limit` or full corpus) and higher `--max_order` to improve accuracy, especially for CJK languages
+- Prune rare prefixes at high orders to reduce model size and memory usage
+- Explore interpolation across n-gram orders instead of strict backoff
 - Explore more advanced models (transformer, fine-tuned/distilled pretrained model) if n-gram baseline meets midterm threshold
 
 ### Optional: additional native-language data

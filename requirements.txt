@@ -1,1 +1,6 @@
 deep-translator
+torch
+transformers
+peft
+datasets
+accelerate

@@ -40,6 +40,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--open_dev_dir", default="data/open-dev",
                    help="Path to open-dev directory (input.txt + answer.txt); "
                         "set to empty string to skip")
+    p.add_argument("--open_dev_limit", type=int, default=None,
+                   help="Max lines to use from open-dev (omit for all)")
     p.add_argument("--epochs", type=int, default=3)
     p.add_argument("--batch_size", type=int, default=32)
     p.add_argument("--max_length", type=int, default=128)
@@ -73,7 +75,7 @@ def load_texts(data_dir: Path, limit: int | None) -> list[str]:
     return texts
 
 
-def load_open_dev(open_dev_dir: Path) -> list[str]:
+def load_open_dev(open_dev_dir: Path, limit: int | None) -> list[str]:
     """Reconstruct full texts from open-dev by appending each answer character
     to its context.  These are kept as independent training lines."""
     input_file = open_dev_dir / "input.txt"
@@ -86,6 +88,8 @@ def load_open_dev(open_dev_dir: Path) -> list[str]:
     with open(answer_file, encoding="utf-8") as f:
         answers = [line.rstrip("\n") for line in f]
     texts = [ctx + ans for ctx, ans in zip(inputs, answers) if ctx or ans]
+    if limit:
+        texts = texts[:limit]
     print(f"  open-dev: {len(texts):,} lines")
     return texts
 
@@ -114,7 +118,7 @@ def main() -> None:
 
     if args.open_dev_dir:
         print(f"Loading open-dev data from {args.open_dev_dir} ...")
-        texts.extend(load_open_dev(Path(args.open_dev_dir)))
+        texts.extend(load_open_dev(Path(args.open_dev_dir), args.open_dev_limit))
 
     print(f"Total: {len(texts):,} lines")
 

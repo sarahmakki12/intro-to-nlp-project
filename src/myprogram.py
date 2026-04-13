@@ -71,6 +71,8 @@ if __name__ == "__main__":
     parser.add_argument("--open_dev_dir", default="data/open-dev",
                         help="open-dev directory to include in LLM training "
                              "(set to empty string to skip)")
+    parser.add_argument("--open_dev_limit", type=int, default=None,
+                        help="max lines from open-dev for LLM training")
 
     # N-gram training options
     parser.add_argument("--train_data", help="path to training CSV (uses context/prediction pairs)")
@@ -104,6 +106,8 @@ if __name__ == "__main__":
             ]
             if args.limit:
                 cmd += ["--limit", str(args.limit)]
+            if args.open_dev_limit:
+                cmd += ["--open_dev_limit", str(args.open_dev_limit)]
             subprocess.run(cmd, check=True)
 
         else:

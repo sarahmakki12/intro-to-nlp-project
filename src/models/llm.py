@@ -26,18 +26,23 @@ MODEL_SUBDIR = "distilgpt2_finetuned"
 class LLMCharModel:
 
     def __init__(self, model_dir: Path):
-        print(f"Loading tokenizer from {model_dir}")
-        self.tokenizer = GPT2TokenizerFast.from_pretrained(str(model_dir))
+        print(f"Loading tokenizer from {model_dir}", flush=True)
+        self.tokenizer = GPT2TokenizerFast.from_pretrained(
+            str(model_dir), local_files_only=True
+        )
         self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        print(f"Loading model from {model_dir}")
-        self.model = GPT2LMHeadModel.from_pretrained(str(model_dir))
+        print(f"Loading model from {model_dir}", flush=True)
+        self.model = GPT2LMHeadModel.from_pretrained(
+            str(model_dir), local_files_only=True
+        )
         self.model.eval()
         torch.set_num_threads(8)
 
-        print("Building character→token-id map...")
+        print("Building character→token-id map...", flush=True)
         self._char_to_token_ids: dict[str, torch.Tensor] = self._build_char_map()
-        print(f"  {len(self._char_to_token_ids)} unique first-characters in vocabulary")
+        print(f"  {len(self._char_to_token_ids)} unique first-characters in vocabulary",
+              flush=True)
 
     # ------------------------------------------------------------------
     # Internal helpers

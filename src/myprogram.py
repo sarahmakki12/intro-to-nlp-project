@@ -152,16 +152,16 @@ if __name__ == "__main__":
         if args.test_output == "pred.txt" and is_csv(args.test_data):
             args.test_output = "pred.csv"
 
-        print(f"Loading test data from {args.test_data}")
+        print(f"Loading test data from {args.test_data}", flush=True)
         ids, contexts = load_test_data(args.test_data)
-        print(f"  {len(contexts):,} examples")
+        print(f"  {len(contexts):,} examples", flush=True)
 
         if args.model == "llm":
             from models.llm import LLMCharModel
             model = LLMCharModel.load(args.work_dir)
 
             print(f"Predicting {len(contexts):,} examples "
-                  f"(batch_size={args.batch_size})")
+                  f"(batch_size={args.batch_size})", flush=True)
             preds: list[str] = []
             bs = args.batch_size
             n_batches = (len(contexts) + bs - 1) // bs

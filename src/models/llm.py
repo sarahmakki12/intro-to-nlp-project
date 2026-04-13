@@ -32,12 +32,15 @@ class LLMCharModel:
         )
         self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        print(f"Loading model from {model_dir}", flush=True)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"Loading model from {model_dir} (device: {self.device})", flush=True)
         self.model = GPT2LMHeadModel.from_pretrained(
             str(model_dir), local_files_only=True
         )
+        self.model.to(self.device)
         self.model.eval()
-        torch.set_num_threads(8)
+        if self.device.type == "cpu":
+            torch.set_num_threads(8)
 
         print("Building character→token-id map...", flush=True)
         self._char_to_token_ids: dict[str, torch.Tensor] = self._build_char_map()
@@ -96,6 +99,7 @@ class LLMCharModel:
             padding=True,
             padding_side="left",  # left-pad so the last real token is always at the right
         )
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
         with torch.inference_mode():
             logits = self.model(**inputs).logits  # (batch, seq_len, vocab)
 

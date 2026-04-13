@@ -6,8 +6,9 @@ At inference time this model:
 1. Tokenizes the context with distilgpt2's byte-level BPE tokenizer
    (every Unicode character is representable without <unk>)
 2. Runs a single forward pass and reads last-position logits
-3. Aggregates softmax probabilities by the first decoded character of each
-   vocabulary token, then returns the top-3 characters
+3. Projects the full vocab probability distribution onto characters via a
+   precomputed (vocab_size × num_chars) matrix multiply — all on GPU — then
+   returns the top-3 characters
 
 The merged model weights (distilgpt2 base + LoRA adapter, produced by
 llm_train.py) live at work/distilgpt2_finetuned/.
@@ -42,18 +43,23 @@ class LLMCharModel:
         if self.device.type == "cpu":
             torch.set_num_threads(8)
 
-        print("Building character→token-id map...", flush=True)
-        self._char_to_token_ids: dict[str, torch.Tensor] = self._build_char_map()
-        print(f"  {len(self._char_to_token_ids)} unique first-characters in vocabulary",
+        print("Building character projection matrix...", flush=True)
+        self._proj, self._chars = self._build_proj_matrix()
+        print(f"  {len(self._chars)} unique first-characters in vocabulary",
               flush=True)
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _build_char_map(self) -> dict[str, torch.Tensor]:
-        """Map each lowercase first-character to the tensor of token IDs whose
-        decoded string starts with that character.  Built once at load time."""
+    def _build_proj_matrix(self) -> tuple[torch.Tensor, list[str]]:
+        """Build a (vocab_size, num_chars) projection matrix on the model device.
+
+        proj[token_id, char_idx] = 1 if the token's decoded string starts with
+        chars[char_idx] (lowercased), else 0.  A single matmul then converts a
+        (batch, vocab_size) probability matrix into (batch, num_chars) character
+        scores with no Python-level loops or GPU↔CPU round-trips.
+        """
         char_to_ids: dict[str, list[int]] = {}
         for token_id in range(self.tokenizer.vocab_size):
             token = self.tokenizer.convert_ids_to_tokens(token_id)
@@ -67,19 +73,15 @@ class LLMCharModel:
                 continue
             first_char = token_str[0].lower()
             char_to_ids.setdefault(first_char, []).append(token_id)
-        return {c: torch.tensor(ids, dtype=torch.long)
-                for c, ids in char_to_ids.items()}
 
-    def _logits_to_top_chars(self, logits: torch.Tensor, n: int) -> str:
-        """Convert last-position logits (vocab_size,) into a top-n char string."""
-        probs = torch.softmax(logits, dim=-1)
-        char_scores = {c: probs[ids].sum().item()
-                       for c, ids in self._char_to_token_ids.items()}
-        top = sorted(char_scores, key=char_scores.get, reverse=True)[:n]
-        # Pad with space if the vocabulary somehow doesn't cover n chars
-        while len(top) < n:
-            top.append(" ")
-        return "".join(top)
+        chars = sorted(char_to_ids.keys())
+        char_to_idx = {c: i for i, c in enumerate(chars)}
+
+        proj = torch.zeros(self.tokenizer.vocab_size, len(chars))
+        for c, ids in char_to_ids.items():
+            proj[ids, char_to_idx[c]] = 1.0
+
+        return proj.to(self.device), chars
 
     # ------------------------------------------------------------------
     # Public API
@@ -103,12 +105,25 @@ class LLMCharModel:
         with torch.inference_mode():
             logits = self.model(**inputs).logits  # (batch, seq_len, vocab)
 
+        # Gather the last real token's logits for each sequence
         attention_mask = inputs["attention_mask"]
+        last_positions = attention_mask.sum(dim=1) - 1  # (batch,)
+        last_logits = logits[
+            torch.arange(len(contexts), device=self.device), last_positions
+        ]  # (batch, vocab)
+
+        # Project vocab probs → character scores in one matmul, entirely on device
+        probs = torch.softmax(last_logits, dim=-1)          # (batch, vocab)
+        char_scores = probs @ self._proj                     # (batch, num_chars)
+        top_indices = char_scores.topk(n_guesses, dim=-1).indices  # (batch, n)
+        top_indices_cpu = top_indices.tolist()
+
         results: list[str] = []
-        for i in range(len(contexts)):
-            # Find the index of the last non-padding token
-            last_pos = int(attention_mask[i].sum().item()) - 1
-            results.append(self._logits_to_top_chars(logits[i, last_pos], n_guesses))
+        for row in top_indices_cpu:
+            chars = [self._chars[idx] for idx in row]
+            while len(chars) < n_guesses:
+                chars.append(" ")
+            results.append("".join(chars))
         return results
 
     # ------------------------------------------------------------------
